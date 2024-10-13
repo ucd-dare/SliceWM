@@ -1,0 +1,19 @@
+# Ignore Python bytecode files
+*.pyc
+__pycache__/
+
+# Ignore JSON lines files
+*.jsonl
+
+# Ignore NumPy compressed files
+*.npz
+
+# Optional: Add other common ignores
+*.log
+*.DS_Store
+.idea/
+.vscode/
+.env
+*.json.gz
+*.png
+*.csv
