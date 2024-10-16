@@ -2,18 +2,14 @@ import numpy as np
 import random
 from embodied.envs.slice_env import NetworkSlicingEnv
 
-def set_seed(seed):
-    np.random.seed(seed)
-    random.seed(seed)
-
 def test_environment_with_policies(env, policy='equal', steps=3000):
     state = env.reset()
     step = 0
     
     while step < steps:
-        if policy == 'equal':
+        if policy == 'random':
             action = env.action_space.sample()
-        elif policy == 'uniform':
+        elif policy == 'equal':
             action = np.zeros(env.action_space.shape, dtype=np.float32)
         
         # allocation = env.onehot2action(action)
@@ -26,9 +22,10 @@ def test_environment_with_policies(env, policy='equal', steps=3000):
             env.reset()
 
 env = NetworkSlicingEnv()
+env.seed(3)
 
 print("Testing with Equal Policy")
 test_environment_with_policies(env, policy='equal')
 
-# print("Testing with Uniform Policy")
-# test_environment_with_policies(env, policy='uniform')
+# print("Testing with Random Policy")
+# test_environment_with_policies(env, policy='random')

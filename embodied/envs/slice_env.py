@@ -3,6 +3,7 @@ from gym import spaces
 import numpy as np
 import matplotlib.pyplot as plt
 import csv
+from gym.utils import seeding
 
 
 class NetworkSlicingEnv(gym.Env):
@@ -81,22 +82,25 @@ class NetworkSlicingEnv(gym.Env):
         self.users_history = []
         self.requirements_history = []
 
+        self.np_random = None
+        self.seed()
+
     def reset(self):
         # Reset step count
         self.current_step = 0
         self.interval_step = 1
         
         # Randomly initialize users for each slice
-        users = np.random.randint(self.users_min, self.users_max, size=(self.num_slices,))
+        users = self.np_random.integers(self.users_min, self.users_max, size=(self.num_slices,))
 
         # Randomly initialize total requirements for each slice based on the number of users
         self.state = {
             'users_1': users[0],
             'users_2': users[1],
             'users_3': users[2],
-            'requirements_1': users[0] * np.random.uniform(self.aver_req_min, self.aver_req_max),
-            'requirements_2': users[1] * np.random.uniform(self.aver_req_min, self.aver_req_max),
-            'requirements_3': users[2] * np.random.uniform(self.aver_req_min * self.emmb_coe, self.aver_req_max * self.emmb_coe),
+            'requirements_1': users[0] * self.np_random.uniform(self.aver_req_min, self.aver_req_max),
+            'requirements_2': users[1] * self.np_random.uniform(self.aver_req_min, self.aver_req_max),
+            'requirements_3': users[2] * self.np_random.uniform(self.aver_req_min * self.emmb_coe, self.aver_req_max * self.emmb_coe),
             'log_throughput_1': 0.0,
             'log_throughput_2': 0.0,
             'log_throughput_3': 0.0,
@@ -107,7 +111,7 @@ class NetworkSlicingEnv(gym.Env):
             'log_violation_2': 0.0,
             'log_violation_3': 0.0
         }
-        self.requirement_interval = np.random.randint(self.requirement_interval_min, self.requirement_interval_max)
+        self.requirement_interval = self.np_random.integers(self.requirement_interval_min, self.requirement_interval_max)
 
         return self.get_observation()
 
@@ -170,14 +174,14 @@ class NetworkSlicingEnv(gym.Env):
         # Check if the time to change demand has been reached
         if self.interval_step % self.requirement_interval == 0:
             # Change demand and time interval randomly
-            users = np.random.randint(self.users_min, self.users_max, size=(self.num_slices,))
+            users = self.np_random.integers(self.users_min, self.users_max, size=(self.num_slices,))
             self.state['users_1'] = users[0]
             self.state['users_2'] = users[1]
             self.state['users_3'] = users[2]
-            self.state['requirements_1'] = users[0] * np.random.uniform(self.aver_req_min, self.aver_req_max)
-            self.state['requirements_2'] = users[1] * np.random.uniform(self.aver_req_min, self.aver_req_max)
-            self.state['requirements_3'] = users[2] * np.random.uniform(self.aver_req_min * self.emmb_coe, self.aver_req_max * self.emmb_coe)
-            self.requirement_interval = np.random.randint(self.requirement_interval_min, self.requirement_interval_max)
+            self.state['requirements_1'] = users[0] * self.np_random.uniform(self.aver_req_min, self.aver_req_max)
+            self.state['requirements_2'] = users[1] * self.np_random.uniform(self.aver_req_min, self.aver_req_max)
+            self.state['requirements_3'] = users[2] * self.np_random.uniform(self.aver_req_min * self.emmb_coe, self.aver_req_max * self.emmb_coe)
+            self.requirement_interval = self.np_random.integers(self.requirement_interval_min, self.requirement_interval_max)
             self.interval_step = 0
 
         # Check if episode is done
@@ -212,6 +216,10 @@ class NetworkSlicingEnv(gym.Env):
             allocation[i] = self.discrete_action[action % self.n_discrete]
             action = action // self.n_discrete
         return allocation
+    
+    def seed(self, seed=None):
+        self.np_random = np.random.default_rng(seed)  # Will use system entropy if seed is None
+        return [seed]
     
     def record(self, file_name='recorded metrics test.csv', close_file=False):
         # Initialize recording if not done already

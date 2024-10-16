@@ -17,3 +17,5 @@ __pycache__/
 *.json.gz
 *.png
 *.csv
+*.v2
+*.ckpt
