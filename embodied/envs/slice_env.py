@@ -77,13 +77,12 @@ class NetworkSlicingEnv(gym.Env):
         self.requirement_interval_min = requirement_interval[0]
         self.requirement_interval_max = requirement_interval[1]
 
+        self.np_random = None
+        self.seed()
         self.reset()
 
         self.users_history = []
         self.requirements_history = []
-
-        self.np_random = None
-        self.seed()
 
     def reset(self):
         # Reset step count
@@ -136,9 +135,6 @@ class NetworkSlicingEnv(gym.Env):
         }
 
     def step(self, action):
-        if self.state['requirements_1'] > 100:
-            print('Out of range!!!')
-
         action = self.onehot2action(action)
         # Normalize actions so they sum to the total available bandwidth
         allocated_resources = action / np.sum(action) * self.total_bandwidth

@@ -2,8 +2,13 @@ import warnings
 from functools import partial as bind
 import numpy as np
 
+# import time
+# import signal
+# import sys
+
 import dreamerv3
 import embodied
+
 
 warnings.filterwarnings('ignore', '.*truncated to dtype int32.*')
 
@@ -62,6 +67,17 @@ def main():
       batch_length_eval=config.batch_length_eval,
       replay_context=config.replay_context,
   )
+
+  # start_time = time.time()
+
+  # def signal_handler(sig, frame):
+  #   end_time = time.time()
+  #   elapsed_time = end_time - start_time
+  #   print(f"\nEvaluation interrupted. Total running time: {elapsed_time:.6f} seconds, end time: {end_time:.6f}")
+  #   sys.exit(0)
+
+  # # Register the signal handler for SIGINT (Ctrl+C)
+  # signal.signal(signal.SIGINT, signal_handler)
 
   embodied.run.eval_only(
       bind(make_agent, config),

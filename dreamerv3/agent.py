@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import numpy as np
 import optax
 import ruamel.yaml as yaml
+import time
 
 from . import jaxagent
 from . import jaxutils
@@ -127,6 +128,7 @@ class Agent(nj.Module):
     return self.init_train(batch_size)
 
   def policy(self, obs, carry, mode='train'):
+    print(f"start time is: {time.time()}")
     self.config.jax.jit and embodied.print(
         'Tracing policy function', color='yellow')
     prevlat, prevact = carry
