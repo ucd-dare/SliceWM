@@ -7,18 +7,10 @@ from gym.utils import seeding
 
 
 class NetworkSlicingEnv(gym.Env):
-    def __init__(self,
-                 max_steps=1000,
+    def __init__(self, max_steps=1000,
                  total_bandwidth=200,
-                 aver_req=[0.5, 1.0],
-                 users=[10, 100],
-                 requirement_interval=[40, 80],
-                 lambda_throughput_embb=5.0,
-                 lambda_delay_embb=-0.5,
-                 lambda_violation_embb=-0.5,
-                 lambda_throughput_urllc=0.5,
-                 lambda_delay_urllc=-5.0,
-                 lambda_violation_urllc=-0.5):
+                 user_range=[1, 20],  # Range of random users in each slice
+                 lambda_throughput_urllc=0.5, lambda_throughput_embb=5.0, lambda_latency_urllc=1.0, lambda_latency_embb=1.0):
         
         super(NetworkSlicingEnv, self).__init__()
 
@@ -35,243 +27,180 @@ class NetworkSlicingEnv(gym.Env):
         # Action space: Allocate resources to 3 slices
         self.action_space = spaces.Discrete(self.n_discrete ** self.num_slices)
 
-        # Users and requirements configuration
-        self.users_min = users[0]
-        self.users_max = users[1]
-        self.aver_req_min = aver_req[0]
-        self.aver_req_max = aver_req[1]
+        # Users configuration
+        self.users_min = user_range[0]
+        self.users_max = user_range[1]
         self.total_bandwidth = total_bandwidth
-        self.emmb_coe = 2.0
         self.is_recording_initialized = False
 
-        # Observation space: Separate users, requirements, and metrics for each slice
+        # Observation space: Queue for each user in each slice
         self.observation_space = spaces.Dict({
-            'users_1': spaces.Box(low=self.users_min, high=self.users_max, shape=(), dtype=np.int64),
-            'users_2': spaces.Box(low=self.users_min, high=self.users_max, shape=(), dtype=np.int64),
-            'users_3': spaces.Box(low=self.users_min, high=self.users_max, shape=(), dtype=np.int64),
-            'requirements_1': spaces.Box(low=0, high=self.aver_req_max * self.users_max, shape=(), dtype=np.float64),
-            'requirements_2': spaces.Box(low=0, high=self.aver_req_max * self.users_max, shape=(), dtype=np.float64),
-            'requirements_3': spaces.Box(low=0, high=self.aver_req_max * self.users_max * self.emmb_coe, shape=(), dtype=np.float64),
-            'log_throughput_1': spaces.Box(low=0, high=self.total_bandwidth, shape=(), dtype=np.float64),
-            'log_throughput_2': spaces.Box(low=0, high=self.total_bandwidth, shape=(), dtype=np.float64),
-            'log_throughput_3': spaces.Box(low=0, high=self.total_bandwidth, shape=(), dtype=np.float64),
-            'log_delay_1': spaces.Box(low=0, high=np.inf, shape=(), dtype=np.float64),
-            'log_delay_2': spaces.Box(low=0, high=np.inf, shape=(), dtype=np.float64),
-            'log_delay_3': spaces.Box(low=0, high=np.inf, shape=(), dtype=np.float64),
-            'log_violation_1': spaces.Box(low=0, high=self.aver_req_max * self.users_max, shape=(), dtype=np.float64),
-            'log_violation_2': spaces.Box(low=0, high=self.aver_req_max * self.users_max, shape=(), dtype=np.float64),
-            'log_violation_3': spaces.Box(low=0, high=self.aver_req_max * self.users_max * self.emmb_coe, shape=(), dtype=np.float64)
+            'queues': spaces.Box(low=0, high=np.inf, shape=(self.num_slices, self.users_max), dtype=np.float64),
+            'throughput_metrics': spaces.Box(low=0, high=np.inf, shape=(self.num_slices,), dtype=np.float64),
+            'latency_metrics': spaces.Box(low=0, high=np.inf, shape=(self.num_slices,), dtype=np.float64)
         })
         
-        # Reward weights for eMBB
-        self.lambda_throughput_embb = lambda_throughput_embb
-        self.lambda_delay_embb = lambda_delay_embb
-        self.lambda_violation_embb = lambda_violation_embb
-
-        # Reward weights for URLLC
+        # Reward weights for URLLC and eMBB
         self.lambda_throughput_urllc = lambda_throughput_urllc
-        self.lambda_delay_urllc = lambda_delay_urllc
-        self.lambda_violation_urllc = lambda_violation_urllc
-
-        # Requirement interval
-        self.requirement_interval_min = requirement_interval[0]
-        self.requirement_interval_max = requirement_interval[1]
+        self.lambda_throughput_embb = lambda_throughput_embb
+        self.lambda_latency_urllc = lambda_latency_urllc
+        self.lambda_latency_embb = lambda_latency_embb
 
         self.np_random = None
         self.seed()
         self.reset()
 
-        self.users_history = []
-        self.requirements_history = []
+        self.arrival_rate = 10  # Average arrival rate for new data  
+        self.T = 5  # Window length for average
+        self.queues = np.zeros((self.num_slices, self.users_max))
+        self.queue_history = [[[] for _ in range(self.users_max)] for _ in range(self.num_slices)]
+        self.sent_data_history = [[[] for _ in range(self.users_max)] for _ in range(self.num_slices)]
+        self.latency_history = []
 
     def reset(self):
         # Reset step count
         self.current_step = 0
-        self.interval_step = 1
         
         # Randomly initialize users for each slice
-        users = self.np_random.integers(self.users_min, self.users_max, size=(self.num_slices,))
-
-        # Randomly initialize total requirements for each slice based on the number of users
-        self.state = {
-            'users_1': users[0],
-            'users_2': users[1],
-            'users_3': users[2],
-            'requirements_1': users[0] * self.np_random.uniform(self.aver_req_min, self.aver_req_max),
-            'requirements_2': users[1] * self.np_random.uniform(self.aver_req_min, self.aver_req_max),
-            'requirements_3': users[2] * self.np_random.uniform(self.aver_req_min * self.emmb_coe, self.aver_req_max * self.emmb_coe),
-            'log_throughput_1': 0.0,
-            'log_throughput_2': 0.0,
-            'log_throughput_3': 0.0,
-            'log_delay_1': 0.0,
-            'log_delay_2': 0.0,
-            'log_delay_3': 0.0,
-            'log_violation_1': 0.0,
-            'log_violation_2': 0.0,
-            'log_violation_3': 0.0
-        }
-        self.requirement_interval = self.np_random.integers(self.requirement_interval_min, self.requirement_interval_max)
-
+        self.num_users = self.np_random.integers(self.users_min, self.users_max + 1, size=(self.num_slices,))
+        
+        # Reset the queues for each user in each slice
+        self.queues = np.zeros((self.num_slices, self.users_max))
+        self.queue_history = [[[] for _ in range(self.users_max)] for _ in range(self.num_slices)]
+        self.sent_data_history = [[[] for _ in range(self.users_max)] for _ in range(self.num_slices)]
+      
+        
         return self.get_observation()
 
     def get_observation(self):
-        # Returns the current observation, including users, requirements, and log metrics
+        # Returns the current observation, including queues for each user in each slice
         return {
-            'users_1': self.state['users_1'],
-            'users_2': self.state['users_2'],
-            'users_3': self.state['users_3'],
-            'requirements_1': self.state['requirements_1'],
-            'requirements_2': self.state['requirements_2'],
-            'requirements_3': self.state['requirements_3'],
-            'log_throughput_1': self.state['log_throughput_1'],
-            'log_throughput_2': self.state['log_throughput_2'],
-            'log_throughput_3': self.state['log_throughput_3'],
-            'log_delay_1': self.state['log_delay_1'],
-            'log_delay_2': self.state['log_delay_2'],
-            'log_delay_3': self.state['log_delay_3'],
-            'log_violation_1': self.state['log_violation_1'],
-            'log_violation_2': self.state['log_violation_2'],
-            'log_violation_3': self.state['log_violation_3']
+            'queues': self.queues,
+            'throughput_metrics': self.throughput_metrics,
+            'latency_metrics': self.latency_metrics
         }
 
     def step(self, action):
         action = self.onehot2action(action)
-        # Normalize actions so they sum to the total available bandwidth
         allocated_resources = action / np.sum(action) * self.total_bandwidth
 
-        # Record users and requirements at each step
-        self.users_history.append([self.state['users_1'], self.state['users_2'], self.state['users_3']])
-        self.requirements_history.append([self.state['requirements_1'], self.state['requirements_2'], self.state['requirements_3']])
+        # Update queues for each user in each slice
+        for s in range(self.num_slices):
+            for u in range(self.num_users[s]):
+                # Arrival data size follows a uniform distribution
+                arrival_data = self.np_random.uniform(0, self.arrival_rate)
+                
+                # Update queue with arrival data
+                self.queues[s][u] += arrival_data
 
-        # Loop through each slice and calculate throughput, delay, violation
-        for i in range(self.num_slices):
-            required = self.state[f'requirements_{i+1}']
-            allocated = allocated_resources[i]
+                # Allocate resources and update the queue
+                sent_data = allocated_resources[s] * (self.queues[s][u] / np.sum(self.queues[s][:self.num_users[s]])) if np.sum(self.queues[s][:self.num_users[s]]) > 0 else 0
+                sent_data = min(sent_data, self.queues[s][u])
+                self.queues[s][u] -= sent_data
+                
+                # Record data
+                self.sent_data_history[s][u].append(sent_data)
+                self.queue_history[s][u].append(self.queues[s][u])
 
-            # Throughput
-            throughput = min(allocated, required)
-            self.state[f'log_throughput_{i+1}'] = throughput
 
-            # Delay
-            if allocated == 0.0:
-                delay = 1000.0
-            else:
-                delay = (required - allocated) * 1000 / allocated if allocated < required else 0.0
-            self.state[f'log_delay_{i+1}'] = delay
+        # Calculate metrics for reward
+        self.throughput_metrics = self.calculate_throughput()
+        self.latency_metrics = self.calculate_latency()
+        throughput_metrics = self.calculate_throughput()
+        latency_metrics = self.calculate_latency()
 
-            # Violation
-            violation = max(0.0, required - allocated)
-            self.state[f'log_violation_{i+1}'] = violation
+        # Calculate rewards for each slice
+        urllc_reward = sum(self.lambda_throughput_urllc * throughput_metrics[:2]) - sum(self.lambda_latency_urllc * latency_metrics[:2])
+        embb_reward = self.lambda_throughput_embb * throughput_metrics[2] - self.lambda_latency_embb * latency_metrics[2]
+
+        total_reward = urllc_reward + embb_reward
 
         # Update step count
         self.current_step += 1
-        self.interval_step += 1
-        
-        # Check if the time to change demand has been reached
-        if self.interval_step % self.requirement_interval == 0:
-            # Change demand and time interval randomly
-            users = self.np_random.integers(self.users_min, self.users_max, size=(self.num_slices,))
-            self.state['users_1'] = users[0]
-            self.state['users_2'] = users[1]
-            self.state['users_3'] = users[2]
-            self.state['requirements_1'] = users[0] * self.np_random.uniform(self.aver_req_min, self.aver_req_max)
-            self.state['requirements_2'] = users[1] * self.np_random.uniform(self.aver_req_min, self.aver_req_max)
-            self.state['requirements_3'] = users[2] * self.np_random.uniform(self.aver_req_min * self.emmb_coe, self.aver_req_max * self.emmb_coe)
-            self.requirement_interval = self.np_random.integers(self.requirement_interval_min, self.requirement_interval_max)
-            self.interval_step = 0
-
-        # Check if episode is done
         done = self.current_step >= self.max_steps
 
-        # The reward could be calculated based on the throughput, delay, and violation for each slice
-        urllc_reward_1 = (self.lambda_throughput_urllc * self.state['log_throughput_1'] +
-                          self.lambda_delay_urllc * self.state['log_delay_1'] +
-                          self.lambda_violation_urllc * self.state['log_violation_1'])
-
-        urllc_reward_2 = (self.lambda_throughput_urllc * self.state['log_throughput_2'] +
-                          self.lambda_delay_urllc * self.state['log_delay_2'] +
-                          self.lambda_violation_urllc * self.state['log_violation_2'])
-        
-        embb_reward = (self.lambda_throughput_embb * self.state['log_throughput_3'] +
-                       self.lambda_delay_embb * self.state['log_delay_3'] +
-                       self.lambda_violation_embb * self.state['log_violation_3'])
-
-        # Total reward is the sum of eMBB and URLLC rewards
-        total_reward = embb_reward + urllc_reward_1 + urllc_reward_2
-
-        self.record() 
+        # Record metrics
+        self.record_metrics(self.throughput_metrics, self.latency_metrics)
 
         return self.get_observation(), total_reward, done, {}
 
+    def calculate_throughput(self):
+        throughput_metrics = []
+        for s in range(self.num_slices):
+            slice_throughput = 0.0
+            for u in range(self.num_users[s]):
+                # Calculate user's average throughput by averaging the data sent by the user over the past T timesteps
+                sent_data_history = self.sent_data_history[s][u][-self.T:] if len(self.sent_data_history[s][u]) >= self.T else self.sent_data_history[s][u][:]
+                avg_throughput = np.mean(sent_data_history) if sent_data_history else 0
+                slice_throughput += avg_throughput
+            throughput_metrics.append(slice_throughput)
+        return throughput_metrics
+
+    def calculate_latency(self):
+        latency_metrics = []
+        for s in range(self.num_slices):
+            slice_latency = 0.0
+            for u in range(self.num_users[s]):
+                # Calculate user's average queue size over the past T timesteps
+                queue_history = self.queue_history[s][u][-self.T:] if len(self.queue_history[s][u]) >= self.T else self.queue_history[s][u][:]
+                avg_queue = np.mean(queue_history) if queue_history else 0
+                
+                # Calculate user's average throughput over the past T timesteps
+                sent_data_history = self.sent_data_history[s][u][-self.T:] if len(self.sent_data_history[s][u]) >= self.T else self.sent_data_history[s][u][:]
+                avg_throughput = np.mean(sent_data_history) if sent_data_history else 0
+                
+                # Calculate average latency for the user
+                avg_latency = avg_queue / avg_throughput if avg_throughput > 0 else 0
+                slice_latency += avg_latency
+            # Average latency for the slice
+            latency_metrics.append(slice_latency / self.num_users[s] if self.num_users[s] > 0 else 0)
+        return latency_metrics
+
     def onehot2action(self, action):
-        # Convert one-hot encoded action to resource allocation for each slice
-        if action == 0: # Avoid all 0 allocation
+        if action == 0:  # Avoid all 0 allocation
             action = 31
         allocation = [0] * self.num_slices
         for i in range(self.num_slices):
             allocation[i] = self.discrete_action[action % self.n_discrete]
             action = action // self.n_discrete
         return allocation
-    
+
     def seed(self, seed=None):
         self.np_random = np.random.default_rng(seed)  # Will use system entropy if seed is None
         return [seed]
-    
-    def record(self, file_name='recorded metrics test.csv', close_file=False):
-        # Initialize recording if not done already
-        if not self.is_recording_initialized:
-            self.csv_file = open(file_name, mode='w', newline='')
-            self.csv_writer = csv.DictWriter(self.csv_file, fieldnames=[
-                'users_1', 'users_2', 'users_3',
-                'requirements_1', 'requirements_2', 'requirements_3',
-                'log_throughput_1', 'log_throughput_2', 'log_throughput_3',
-                'log_delay_1', 'log_delay_2', 'log_delay_3',
-                'log_violation_1', 'log_violation_2', 'log_violation_3',
-            ])
-            self.csv_writer.writeheader()
-            self.is_recording_initialized = True
 
-        # Record observation for the current step
-        observation = self.get_observation()
-
-        self.csv_writer.writerow(observation)
-
-        # Close file if it's the end of the simulation
-        if close_file and self.csv_file:
-            self.csv_file.close()
-            self.is_recording_initialized = False
-
+    def record_metrics(self, throughput_metrics, latency_metrics):
+        self.throughput_history.append(throughput_metrics)
+        self.latency_history.append(latency_metrics)
 
     def render(self):
         print(f"Step: {self.current_step}")
         for i, slice_type in enumerate(self.slice_types):
-            print(f"Slice {i+1} ({slice_type}): Users: {self.state[f'users_{i+1}']}, "
-                  f"Requirement: {self.state[f'requirements_{i+1}']}, "
-                  f"Throughput: {self.state[f'log_throughput_{i+1}']}, "
-                  f"Delay: {self.state[f'log_delay_{i+1}']}, "
-                  f"Violation: {self.state[f'log_violation_{i+1}']}")
+            print(f"Slice {i + 1} ({slice_type}): Users: {self.num_users[i]}, "
+                  f"Throughput: {self.throughput_history[-1][i]}, "
+                  f"Latency: {self.latency_history[-1][i]}")
         print("")
 
     def draw_figures(self):
-        steps = range(len(self.users_history))  # Number of steps recorded
+        steps = range(len(self.throughput_history))  # Number of steps recorded
 
         # Create subplots
         fig, axs = plt.subplots(2, 1, figsize=(10, 8))
 
-        # Plot user numbers over steps for each slice
+        # Plot throughput over steps for each slice
         for i in range(self.num_slices):
-            axs[0].plot(steps, [users[i] for users in self.users_history], label=f"Slice {i+1} users")
-        axs[0].set_title('Number of Users per Slice over Time')
+            axs[0].plot(steps, [throughput[i] for throughput in self.throughput_history], label=f"Slice {i + 1} throughput")
+        axs[0].set_title('Throughput per Slice over Time')
         axs[0].set_xlabel('Steps')
-        axs[0].set_ylabel('Users')
+        axs[0].set_ylabel('Throughput')
         axs[0].legend(loc='upper right')
 
-        # Plot requirements over steps for each slice
+        # Plot latency over steps for each slice
         for i in range(self.num_slices):
-            axs[1].plot(steps, [reqs[i] for reqs in self.requirements_history], label=f"Slice {i+1} requirements")
-        axs[1].set_title('Requirements per Slice over Time')
+            axs[1].plot(steps, [latency[i] for latency in self.latency_history], label=f"Slice {i + 1} latency")
+        axs[1].set_title('Latency per Slice over Time')
         axs[1].set_xlabel('Steps')
-        axs[1].set_ylabel('Requirements')
+        axs[1].set_ylabel('Latency')
         axs[1].legend(loc='upper right')
 
         # Show the plot
@@ -287,11 +216,8 @@ if __name__ == "__main__":
 
     for step in range(1000):
         action = env.action_space.sample()  # Sample a random action
-        allocation = env.onehot2action(action)
-        print(f'action: {action}, allocation:{allocation}')
         obs, reward, done, info = env.step(action)
         env.render()
         if done:
             env.draw_figures()
             break
-
