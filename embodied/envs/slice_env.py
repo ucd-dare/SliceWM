@@ -9,8 +9,8 @@ from gym.utils import seeding
 class NetworkSlicingEnv(gym.Env):
     def __init__(self, max_steps=1000,
                  total_bandwidth=200,
-                 user_range=[1, 20],  # Range of random users in each slice
-                 lambda_throughput_urllc=0.5, lambda_throughput_embb=5.0, lambda_latency_urllc=1.0, lambda_latency_embb=1.0):
+                 user_range=[2, 2],  # Range of random users in each slice
+                 lambda_throughput_urllc=0.5, lambda_throughput_embb=5.0, lambda_latency_urllc=-5.0, lambda_latency_embb=-1.0):
         
         super(NetworkSlicingEnv, self).__init__()
 
@@ -35,9 +35,9 @@ class NetworkSlicingEnv(gym.Env):
 
         # Observation space: Queue for each user in each slice
         self.observation_space = spaces.Dict({
-            'queues': spaces.Box(low=0, high=np.inf, shape=(self.num_slices, self.users_max), dtype=np.float64),
-            'throughput_metrics': spaces.Box(low=0, high=np.inf, shape=(self.num_slices,), dtype=np.float64),
-            'latency_metrics': spaces.Box(low=0, high=np.inf, shape=(self.num_slices,), dtype=np.float64)
+            'aver_throughput': spaces.Box(low=0, high=np.inf, shape=(self.num_slices,), dtype=np.float64),
+            'aver_latency': spaces.Box(low=0, high=np.inf, shape=(self.num_slices,), dtype=np.float64),
+            'total_queue': spaces.Box(low=0, high=np.inf, shape=(self.num_slices,), dtype=np.float64)
         })
         
         # Reward weights for URLLC and eMBB
@@ -50,11 +50,12 @@ class NetworkSlicingEnv(gym.Env):
         self.seed()
         self.reset()
 
-        self.arrival_rate = 10  # Average arrival rate for new data  
-        self.T = 5  # Window length for average
+        self.arrival_rate = 80  # Average arrival rate for new data  
+        self.T = 3  # Window length for average
         self.queues = np.zeros((self.num_slices, self.users_max))
         self.queue_history = [[[] for _ in range(self.users_max)] for _ in range(self.num_slices)]
         self.sent_data_history = [[[] for _ in range(self.users_max)] for _ in range(self.num_slices)]
+        self.throughput_history = []
         self.latency_history = []
 
     def reset(self):
@@ -67,17 +68,21 @@ class NetworkSlicingEnv(gym.Env):
         # Reset the queues for each user in each slice
         self.queues = np.zeros((self.num_slices, self.users_max))
         self.queue_history = [[[] for _ in range(self.users_max)] for _ in range(self.num_slices)]
+        self.arrival_data_history = [[[] for _ in range(self.users_max)] for _ in range(self.num_slices)]
         self.sent_data_history = [[[] for _ in range(self.users_max)] for _ in range(self.num_slices)]
-      
+
+        self.slice_total_queue = [0.0] * self.num_slices
+        self.slice_aver_throughput = [0.0] * self.num_slices
+        self.slice_aver_latency = [0.0] * self.num_slices
         
         return self.get_observation()
 
     def get_observation(self):
         # Returns the current observation, including queues for each user in each slice
         return {
-            'queues': self.queues,
-            'throughput_metrics': self.throughput_metrics,
-            'latency_metrics': self.latency_metrics
+            'total_queue': self.slice_total_queue,
+            'aver_throughput': self.slice_aver_throughput,
+            'aver_latency': self.slice_aver_latency
         }
 
     def step(self, action):
@@ -87,31 +92,34 @@ class NetworkSlicingEnv(gym.Env):
         # Update queues for each user in each slice
         for s in range(self.num_slices):
             for u in range(self.num_users[s]):
-                # Arrival data size follows a uniform distribution
                 arrival_data = self.np_random.uniform(0, self.arrival_rate)
-                
-                # Update queue with arrival data
+                self.arrival_data_history[s][u].append(arrival_data)
                 self.queues[s][u] += arrival_data
 
                 # Allocate resources and update the queue
-                sent_data = allocated_resources[s] * (self.queues[s][u] / np.sum(self.queues[s][:self.num_users[s]])) if np.sum(self.queues[s][:self.num_users[s]]) > 0 else 0
+                if len(self.queue_history[s][u]) == 0 or sum(self.queue_history[s][user][self.current_step-1] for user in range(self.num_users[s])) == 0:
+                    # When the first step and when all queue equal to 0, use equal allocation
+                    sent_data = allocated_resources[s] / self.num_users[s]
+                else:
+                    # Proportional allocation
+                    last_queue = self.queue_history[s][u][self.current_step-1]
+                    sent_data = allocated_resources[s] * last_queue / sum(self.queue_history[s][user][self.current_step-1] for user in range(self.num_users[s]))
                 sent_data = min(sent_data, self.queues[s][u])
                 self.queues[s][u] -= sent_data
                 
-                # Record data
                 self.sent_data_history[s][u].append(sent_data)
                 self.queue_history[s][u].append(self.queues[s][u])
 
+        # TODO: the unit of latency
 
         # Calculate metrics for reward
-        self.throughput_metrics = self.calculate_throughput()
-        self.latency_metrics = self.calculate_latency()
-        throughput_metrics = self.calculate_throughput()
-        latency_metrics = self.calculate_latency()
+        self.slice_aver_throughput = self.calculate_throughput()
+        self.slice_aver_latency = self.calculate_latency()
+        self.slice_total_queue = self.calculate_queue()
 
         # Calculate rewards for each slice
-        urllc_reward = sum(self.lambda_throughput_urllc * throughput_metrics[:2]) - sum(self.lambda_latency_urllc * latency_metrics[:2])
-        embb_reward = self.lambda_throughput_embb * throughput_metrics[2] - self.lambda_latency_embb * latency_metrics[2]
+        urllc_reward = np.dot([self.lambda_throughput_urllc] * 2, self.slice_aver_throughput[:2]) + np.dot([self.lambda_latency_urllc] * 2, self.slice_aver_latency[:2])
+        embb_reward = (self.lambda_throughput_embb * self.slice_aver_throughput[2]) + (self.lambda_latency_embb * self.slice_aver_latency[2])
 
         total_reward = urllc_reward + embb_reward
 
@@ -120,12 +128,25 @@ class NetworkSlicingEnv(gym.Env):
         done = self.current_step >= self.max_steps
 
         # Record metrics
-        self.record_metrics(self.throughput_metrics, self.latency_metrics)
+        self.record_metrics(self.slice_aver_throughput, self.slice_aver_latency)
 
         return self.get_observation(), total_reward, done, {}
+    
+    def calculate_queue(self):
+        slice_total_queue = []
+        for s in range(self.num_slices):
+            slice_queue = 0.0
+            for u in range(self.num_users[s]):
+                # Calculate user's average queue size over the past T timesteps
+                queue_history = self.queue_history[s][u][-self.T:] if len(self.queue_history[s][u]) >= self.T else self.queue_history[s][u][:]
+                avg_queue = np.mean(queue_history) if queue_history else 0
+                slice_queue += avg_queue
+            # Average queue for the slice
+            slice_total_queue.append(slice_queue)
+        return slice_total_queue
 
     def calculate_throughput(self):
-        throughput_metrics = []
+        slice_aver_throughput = []
         for s in range(self.num_slices):
             slice_throughput = 0.0
             for u in range(self.num_users[s]):
@@ -133,11 +154,11 @@ class NetworkSlicingEnv(gym.Env):
                 sent_data_history = self.sent_data_history[s][u][-self.T:] if len(self.sent_data_history[s][u]) >= self.T else self.sent_data_history[s][u][:]
                 avg_throughput = np.mean(sent_data_history) if sent_data_history else 0
                 slice_throughput += avg_throughput
-            throughput_metrics.append(slice_throughput)
-        return throughput_metrics
+            slice_aver_throughput.append(slice_throughput)
+        return slice_aver_throughput
 
     def calculate_latency(self):
-        latency_metrics = []
+        slice_aver_latency = []
         for s in range(self.num_slices):
             slice_latency = 0.0
             for u in range(self.num_users[s]):
@@ -150,11 +171,11 @@ class NetworkSlicingEnv(gym.Env):
                 avg_throughput = np.mean(sent_data_history) if sent_data_history else 0
                 
                 # Calculate average latency for the user
-                avg_latency = avg_queue / avg_throughput if avg_throughput > 0 else 0
+                avg_latency = avg_queue / avg_throughput if avg_throughput > 0 else 500
                 slice_latency += avg_latency
             # Average latency for the slice
-            latency_metrics.append(slice_latency / self.num_users[s] if self.num_users[s] > 0 else 0)
-        return latency_metrics
+            slice_aver_latency.append(slice_latency / self.num_users[s] if self.num_users[s] > 0 else 0)
+        return slice_aver_latency
 
     def onehot2action(self, action):
         if action == 0:  # Avoid all 0 allocation
@@ -176,9 +197,13 @@ class NetworkSlicingEnv(gym.Env):
     def render(self):
         print(f"Step: {self.current_step}")
         for i, slice_type in enumerate(self.slice_types):
-            print(f"Slice {i + 1} ({slice_type}): Users: {self.num_users[i]}, "
-                  f"Throughput: {self.throughput_history[-1][i]}, "
-                  f"Latency: {self.latency_history[-1][i]}")
+            print(f"Slice {i + 1} ({slice_type}): Users: {self.num_users[i]}")
+            # for u in range(self.num_users[i]):
+            #     print(f"  User {u + 1} Arrival: {self.arrival_data_history[i][u][self.current_step-1]:.2f}")
+            #     print(f"  User {u + 1} Queue: {self.queues[i][u]:.2f}")
+            print(f"  Total Queue: {self.slice_total_queue[i]:.2f}")
+            print(f"  Throughput: {self.slice_aver_throughput[i]:.2f}")
+            print(f"  Latency: {self.slice_aver_latency[i]:.2f}")
         print("")
 
     def draw_figures(self):
@@ -214,10 +239,10 @@ if __name__ == "__main__":
     env = NetworkSlicingEnv()
     state = env.reset()
 
-    for step in range(1000):
+    for step in range(10):
         action = env.action_space.sample()  # Sample a random action
         obs, reward, done, info = env.step(action)
         env.render()
         if done:
-            env.draw_figures()
+            # env.draw_figures()
             break
