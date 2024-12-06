@@ -3,14 +3,15 @@ from gym import spaces
 import numpy as np
 import matplotlib.pyplot as plt
 import csv
+import os
 from gym.utils import seeding
 
 
 class NetworkSlicingEnv(gym.Env):
     def __init__(self, max_steps=1000,
-                 total_bandwidth=200,
-                 user_range=[2, 2],  # Range of random users in each slice
-                 lambda_throughput_urllc=0.5, lambda_throughput_embb=5.0, lambda_latency_urllc=-5.0, lambda_latency_embb=-1.0):
+                 total_bandwidth=150,
+                 user_range=[8, 16],  # Range of random users in each slice
+                 lambda_throughput_urllc=0.5, lambda_throughput_embb=5.0, lambda_latency_urllc=-2.0, lambda_latency_embb=-0.1):
         
         super(NetworkSlicingEnv, self).__init__()
 
@@ -23,6 +24,8 @@ class NetworkSlicingEnv(gym.Env):
         # Fixed number of time steps per episode
         self.max_steps = max_steps
         self.current_step = 0
+        self.max_queue = 200
+        self.user_coe = 2.0
 
         # Action space: Allocate resources to 3 slices
         self.action_space = spaces.Discrete(self.n_discrete ** self.num_slices)
@@ -50,7 +53,7 @@ class NetworkSlicingEnv(gym.Env):
         self.seed()
         self.reset()
 
-        self.arrival_rate = 80  # Average arrival rate for new data  
+        self.arrival_rate = 15  # Average arrival rate for new data  
         self.T = 3  # Window length for average
         self.queues = np.zeros((self.num_slices, self.users_max))
         self.queue_history = [[[] for _ in range(self.users_max)] for _ in range(self.num_slices)]
@@ -64,6 +67,14 @@ class NetworkSlicingEnv(gym.Env):
         
         # Randomly initialize users for each slice
         self.num_users = self.np_random.integers(self.users_min, self.users_max + 1, size=(self.num_slices,))
+        self.num_users[0] = self.np_random.integers(
+        int(self.users_min / self.user_coe), 
+        int((self.users_max + 1) / self.user_coe)
+        )
+        self.num_users[1] = self.np_random.integers(
+            int(self.users_min / self.user_coe), 
+            int((self.users_max + 1) / self.user_coe)
+        )
         
         # Reset the queues for each user in each slice
         self.queues = np.zeros((self.num_slices, self.users_max))
@@ -80,7 +91,7 @@ class NetworkSlicingEnv(gym.Env):
     def get_observation(self):
         # Returns the current observation, including queues for each user in each slice
         return {
-            'total_queue': self.slice_total_queue,
+            'total_queue': np.array(self.slice_total_queue) * (1 + np.random.uniform(-0.08, 0.08)),
             'aver_throughput': self.slice_aver_throughput,
             'aver_latency': self.slice_aver_latency
         }
@@ -95,6 +106,7 @@ class NetworkSlicingEnv(gym.Env):
                 arrival_data = self.np_random.uniform(0, self.arrival_rate)
                 self.arrival_data_history[s][u].append(arrival_data)
                 self.queues[s][u] += arrival_data
+                self.queues[s][u] = min(self.queues[s][u], self.max_queue)
 
                 # Allocate resources and update the queue
                 if len(self.queue_history[s][u]) == 0 or sum(self.queue_history[s][user][self.current_step-1] for user in range(self.num_users[s])) == 0:
@@ -194,6 +206,23 @@ class NetworkSlicingEnv(gym.Env):
         self.throughput_history.append(throughput_metrics)
         self.latency_history.append(latency_metrics)
 
+        record = {
+            "throughput_1": throughput_metrics[0],
+            "throughput_2": throughput_metrics[1],
+            "throughput_3": throughput_metrics[2],
+            "latency_1": latency_metrics[0],
+            "latency_2": latency_metrics[1],
+            "latency_3": latency_metrics[2]
+        }
+        
+        csv_file = "recorded_metrics.csv"
+        file_exists = os.path.isfile(csv_file)
+        with open(csv_file, mode="a", newline="") as file:
+            writer = csv.DictWriter(file, fieldnames=record.keys())
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(record)
+
     def render(self):
         print(f"Step: {self.current_step}")
         for i, slice_type in enumerate(self.slice_types):
@@ -239,10 +268,10 @@ if __name__ == "__main__":
     env = NetworkSlicingEnv()
     state = env.reset()
 
-    for step in range(10):
+    for step in range(1000):
         action = env.action_space.sample()  # Sample a random action
         obs, reward, done, info = env.step(action)
-        env.render()
+        # env.render()
         if done:
             # env.draw_figures()
             break
