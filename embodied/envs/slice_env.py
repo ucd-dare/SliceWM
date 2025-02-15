@@ -9,9 +9,9 @@ from gym.utils import seeding
 
 class NetworkSlicingEnv(gym.Env):
     def __init__(self, max_steps=1000,
-                 total_bandwidth=150,
-                 user_range=[8, 16],  # Range of random users in each slice
-                 lambda_throughput_urllc=0.5, lambda_throughput_embb=5.0, lambda_latency_urllc=-2.0, lambda_latency_embb=-0.1):
+                 total_bandwidth=300,
+                 user_range=[12, 24],  # Range of random users in each slice
+                 lambda_throughput_urllc=0.1, lambda_throughput_embb=10.0, lambda_latency_urllc=-50.0, lambda_latency_embb=-0.1):
         
         super(NetworkSlicingEnv, self).__init__()
 
@@ -25,7 +25,7 @@ class NetworkSlicingEnv(gym.Env):
         self.max_steps = max_steps
         self.current_step = 0
         self.max_queue = 200
-        self.user_coe = 2.0
+        self.user_coe = 3.0
 
         # Action space: Allocate resources to 3 slices
         self.action_space = spaces.Discrete(self.n_discrete ** self.num_slices)
@@ -91,7 +91,7 @@ class NetworkSlicingEnv(gym.Env):
     def get_observation(self):
         # Returns the current observation, including queues for each user in each slice
         return {
-            'total_queue': np.array(self.slice_total_queue) * (1 + np.random.uniform(-0.08, 0.08)),
+            'total_queue': np.array(self.slice_total_queue),
             'aver_throughput': self.slice_aver_throughput,
             'aver_latency': self.slice_aver_latency
         }
@@ -103,7 +103,7 @@ class NetworkSlicingEnv(gym.Env):
         # Update queues for each user in each slice
         for s in range(self.num_slices):
             for u in range(self.num_users[s]):
-                arrival_data = self.np_random.uniform(0, self.arrival_rate)
+                arrival_data = self.np_random.poisson(self.arrival_rate)
                 self.arrival_data_history[s][u].append(arrival_data)
                 self.queues[s][u] += arrival_data
                 self.queues[s][u] = min(self.queues[s][u], self.max_queue)
@@ -117,12 +117,11 @@ class NetworkSlicingEnv(gym.Env):
                     last_queue = self.queue_history[s][u][self.current_step-1]
                     sent_data = allocated_resources[s] * last_queue / sum(self.queue_history[s][user][self.current_step-1] for user in range(self.num_users[s]))
                 sent_data = min(sent_data, self.queues[s][u])
+                sent_data = round(sent_data)
                 self.queues[s][u] -= sent_data
                 
                 self.sent_data_history[s][u].append(sent_data)
                 self.queue_history[s][u].append(self.queues[s][u])
-
-        # TODO: the unit of latency
 
         # Calculate metrics for reward
         self.slice_aver_throughput = self.calculate_throughput()
@@ -137,10 +136,16 @@ class NetworkSlicingEnv(gym.Env):
 
         # Update step count
         self.current_step += 1
+        # if self.max_steps*2 / 4 > self.current_step >= self.max_steps / 4:
+        #     self.arrival_rate = 45
+        # if self.max_steps*3 / 4 > self.current_step >= self.max_steps * 2 / 4:
+        #     self.arrival_rate = 5
+        # if self.max_steps*3 / 4 <= self.current_step:
+        #     self.arrival_rate = 25
         done = self.current_step >= self.max_steps
 
         # Record metrics
-        self.record_metrics(self.slice_aver_throughput, self.slice_aver_latency)
+        self.record_metrics(self.slice_aver_throughput, self.slice_aver_latency, self.arrival_rate, self.current_step)
 
         return self.get_observation(), total_reward, done, {}
     
@@ -202,17 +207,19 @@ class NetworkSlicingEnv(gym.Env):
         self.np_random = np.random.default_rng(seed)  # Will use system entropy if seed is None
         return [seed]
 
-    def record_metrics(self, throughput_metrics, latency_metrics):
+    def record_metrics(self, throughput_metrics, latency_metrics, arrival_rate, step):
         self.throughput_history.append(throughput_metrics)
         self.latency_history.append(latency_metrics)
 
         record = {
+            "step": step,
             "throughput_1": throughput_metrics[0],
             "throughput_2": throughput_metrics[1],
             "throughput_3": throughput_metrics[2],
             "latency_1": latency_metrics[0],
             "latency_2": latency_metrics[1],
-            "latency_3": latency_metrics[2]
+            "latency_3": latency_metrics[2],
+            "arrival_rate": arrival_rate,
         }
         
         csv_file = "recorded_metrics.csv"
