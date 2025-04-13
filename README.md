@@ -66,12 +66,12 @@ Then run evaluation script by:
 ```bash
 python eval.py
 ```
-**Note:** If the csv file `recorded_metrics.csv` exists before running the evaluation script, the metrics from two evaluations mix. To avoid this, you can delete or rename the `recorded_metrics.csv` manually everytime before evaluation.
 
-The evaluation record all the metrics in a csv file `recorded_metrics.csv`. To calculate the metrics in the evaluation, run the script:
+The evaluation script records all the metrics in a csv file `recorded_metrics.csv`. To calculate the metrics in the evaluation, run the script:
 ```bash
 python metric_cal.py
 ```
+**Note:** If the csv file `recorded_metrics.csv` exists before running the evaluation script, the metrics from two evaluations mix. To avoid this, you can delete or rename the `recorded_metrics.csv` manually everytime before evaluation.
 
 You can also further visualize the plot by:
 ```bash
