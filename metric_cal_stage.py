@@ -97,5 +97,5 @@ def plot_metrics_by_step(file_name='recorded_metrics.csv', smoothing_sigma=15):
     plt.show()
 
 # Call the functions
-calculate_metrics_by_stage('recorded_metrics 4000 20.csv')
-plot_metrics_by_step('recorded_metrics 4000 20.csv')
+calculate_metrics_by_stage('recorded_metrics.csv')
+plot_metrics_by_step('recorded_metrics.csv')
