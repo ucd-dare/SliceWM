@@ -15,7 +15,7 @@ __pycache__/
 .vscode/
 .env
 *.json.gz
-*.png
+# *.png
 *.csv
 *.v2
 *.ckpt
