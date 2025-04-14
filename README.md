@@ -2,6 +2,8 @@
 
 We introduce a world-model-based RL framework for adaptive network slicing, leveraging DreamerV3 based world model.
 
+<img src="./images/framework.png" alt="Visualization" width="800"/>
+
 ## Installation
 
 ### Install Conda
@@ -72,8 +74,3 @@ The evaluation script records all the metrics in a csv file `recorded_metrics.cs
 python metric_cal.py
 ```
 **Note:** If the csv file `recorded_metrics.csv` exists before running the evaluation script, the metrics from two evaluations mix. To avoid this, you can delete or rename the `recorded_metrics.csv` manually everytime before evaluation.
-
-You can also further visualize the plot by:
-```bash
-python metric_plot.py
-```
