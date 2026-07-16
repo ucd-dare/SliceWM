@@ -1,5 +1,15 @@
 # World-Model-Based Adaptive Network Slicing
 
+<div align="center">
+    &nbsp;|&nbsp;
+    <a href="[https://arxiv.org/abs/2412.09782](https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=11432643)">
+        <img src="https://img.icons8.com/?size=32&id=48326&format=png" alt="Pre-print" />
+        Paper
+    </a>
+    &nbsp;|&nbsp;
+
+</div>
+
 We introduce a world-model-based RL framework for adaptive network slicing, leveraging DreamerV3 based world model.
 
 <img src="./images/framework.png" alt="Visualization" width="800"/>
@@ -80,7 +90,6 @@ python metric_cal.py
 
 If you find this repository useful, please cite this paper:
 
-**[Paper link]()**
 ```
 @inproceedings{zhou2025world,
   title={World-Model-Based Adaptive Network Slicing},
