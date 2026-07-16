@@ -2,7 +2,7 @@
 
 <div align="center">
     &nbsp;|&nbsp;
-    <a href="[https://arxiv.org/abs/2412.09782](https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=11432643)">
+    <a href="https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=11432643">
         <img src="https://img.icons8.com/?size=32&id=48326&format=png" alt="Pre-print" />
         Paper
     </a>
