@@ -74,3 +74,20 @@ The evaluation script records all the metrics in a csv file `recorded_metrics.cs
 python metric_cal.py
 ```
 **Note:** If the csv file `recorded_metrics.csv` exists before running the evaluation script, the metrics from two evaluations mix. To avoid this, you can delete or rename the `recorded_metrics.csv` manually everytime before evaluation.
+
+
+## 🌟 Citation
+
+If you find this repository useful, please cite this paper:
+
+**[Paper link]()**
+```
+@inproceedings{zhou2025world,
+  title={World-Model-Based Adaptive Network Slicing},
+  author={Zhou, Hanchu and Lin, Sen and Wang, Weiwei and Gao, Dechen and Zhang, Junshan},
+  booktitle={GLOBECOM 2025-2025 IEEE Global Communications Conference},
+  pages={1627--1632},
+  year={2025},
+  organization={IEEE}
+}
+```
